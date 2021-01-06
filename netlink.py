@@ -2,6 +2,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from json import loads as json_loads
 from textwrap import wrap
 from typing import Dict, List
 from datetime import datetime, timedelta
@@ -160,13 +161,32 @@ def check_iface_type(iface, type):
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Process some integers.')
+    class Args:
+        def __init__(self):
+            self.wireguard=[]
+            self.vxlan=[]
+
+    parser = argparse.ArgumentParser(description='Process some interfaces.')
+    parser.add_argument('-c', '--cfg', metavar='CONFIGPATH', type=str,
+                    help='ignore -w and -x and read a configfile instead')
     parser.add_argument('-w', '--wireguard', metavar='IFACE', type=str, nargs='+',
                     help='add an wireguard interfaces', default=[])
     parser.add_argument('-x', '--vxlan', metavar='IFACE', type=str, nargs='+',
                     help='add an vxlan interfaces', default=[])
 
     args = parser.parse_args()
+
+    if args.cfg is not None:
+        if any((args.wireguard, args.vxlan)):
+            print("Please use either cfg- or 'wireguard and vxlan'-parameters, not both.")
+            exit(1)
+        # overwrite args
+        with open(args.cfg) as configfile:
+            data = configfile.read()
+            configobject=json_loads(data)
+            args=Args()
+            args.wireguard=configobject['interfaces']['wireguard']
+            args.vxlan=configobject['interfaces']['vxlan']
 
     if len(args.wireguard) != len(args.vxlan):
         print('Please specify equal amount of vxlan and wireguard interfaces.')

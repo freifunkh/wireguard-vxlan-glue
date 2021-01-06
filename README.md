@@ -15,6 +15,7 @@ This tool is intended to facilitate running BATMAN over VXLAN over WireGuard as 
 
 ## Configuration
 
-* Specify interfaces using -w and -x and have equal amounts of them.
+* Specify interfaces using `-w` and `-x` and have equal amounts of them.
+* Or specify a path to a configfile via `-c` like the provided [netlink_cfg.json.example](netlink_cfg.json.example).
 
 
