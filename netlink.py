@@ -203,6 +203,9 @@ if __name__ == '__main__':
         check_iface_type(args.vxlan[i], 'vxlan')
 
         managers.append(ConfigManager(args.wireguard[i], args.vxlan[i]))
+    
+    for manager in managers:
+        manager.cleanup()
 
     should_stop = False
 
