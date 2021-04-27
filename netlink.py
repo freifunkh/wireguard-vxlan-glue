@@ -17,6 +17,9 @@ import time
 import ipaddress
 import re
 
+RT_PROTO_ID = 129
+RT_PROTO = "wg-vxlan-glue"
+
 
 def mac2eui64(mac, prefix=None):
     """
@@ -133,6 +136,7 @@ class ConfigManager:
                     "add" if new_state else "del",
                     dst=peer.lladdr,
                     oif=ip.link_lookup(ifname=self.wg_interface)[0],
+                    proto=RT_PROTO_ID,
                 )
 
             if new_state:
@@ -157,6 +161,23 @@ def check_iface_type(iface, type):
             if l[0] == 'DEVTYPE' and l[1] != type:
                 print(f'Iface {iface} is wrong type! Should be {type}, but is {l[1]}. Exiting...')
                 exit(1)
+
+
+def ensure_rt_proto_definition():
+    proto_file = '/etc/iproute2/rt_protos.d/wireguard-vxlan-glue.conf'
+    if os.path.isfile(proto_file):
+        return
+
+    with open(proto_file, 'w') as f:
+        f.write(f'{RT_PROTO_ID}\t{RT_PROTO}\n')
+
+
+def initial_cleanup():
+    with IPRoute() as ip:
+        res = ip.flush_routes(proto=RT_PROTO_ID)
+
+        if len(res) > 0:
+            print(f'Initial cleanup: Deleted {len(res)} route(s) with proto {RT_PROTO}.')
 
 
 if __name__ == '__main__':
@@ -195,6 +216,9 @@ if __name__ == '__main__':
     if len(args.wireguard) < 1:
         print('Please specify at least one vxlan and one wireguard interface.')
         exit(1)
+
+    ensure_rt_proto_definition()
+    initial_cleanup()
 
     managers = []
 
