@@ -98,20 +98,24 @@ class ConfigManager:
 
     def pull_from_wireguard(self):
         with WireGuard() as wg:
-            clients = wg.info(self.wg_interface)[0].WGDEVICE_A_PEERS.value
+            infos = wg.info(self.wg_interface)
+            for info in infos:
+                clients = info.WGDEVICE_A_PEERS.value
 
-            for client in clients:
-                latest_handshake = client.WGPEER_A_LAST_HANDSHAKE_TIME["tv_sec"]
-                public_key = client.WGPEER_A_PUBLIC_KEY["value"].decode("utf-8")
+                for client in clients:
+                    if "tv_sec" not in client.WGPEER_A_LAST_HANDSHAKE_TIME:
+                        continue
+                    latest_handshake = client.WGPEER_A_LAST_HANDSHAKE_TIME["tv_sec"]
+                    public_key = client.WGPEER_A_PUBLIC_KEY["value"].decode("utf-8")
 
-                peer = self.find_by_public_key(public_key)
-                if len(peer) < 1:
-                    peer = WireGuardPeer(public_key)
-                    self.all_peers.append(peer)
-                else:
-                    peer = peer[0]
+                    peer = self.find_by_public_key(public_key)
+                    if len(peer) < 1:
+                        peer = WireGuardPeer(public_key)
+                        self.all_peers.append(peer)
+                    else:
+                        peer = peer[0]
 
-                peer.latest_handshake = datetime.fromtimestamp(latest_handshake)
+                    peer.latest_handshake = datetime.fromtimestamp(latest_handshake)
 
     def push_vxlan_configs(self, force_remove = False):
         for peer in self.all_peers:
