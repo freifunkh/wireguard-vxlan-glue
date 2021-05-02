@@ -1,17 +1,19 @@
+"""Functions related to netlink manipulation for Wireguard, IPRoute and FDB on Linux."""
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
 from json import loads as json_loads
 from textwrap import wrap
 from typing import Dict, List
 from datetime import datetime, timedelta
 import signal
 
-from pyroute2 import WireGuard, IPRoute
 import argparse
 import signal
 import os
+import pyroute2
 import time
 
 import ipaddress
@@ -19,6 +21,7 @@ import re
 
 RT_PROTO_ID = 129
 RT_PROTO = "wg-vxlan-glue"
+TIMEOUT = timedelta(minutes=3)
 
 
 def mac2eui64(mac, prefix=None):
@@ -43,9 +46,18 @@ def mac2eui64(mac, prefix=None):
 
 #from wgkex.common.utils import mac2eui64
 
-TIMEOUT = timedelta(minutes=3)
 
 class WireGuardPeer:
+    """A Class representing a WireGuard peer.
+
+    Attributes:
+        public_key: The public key to use for this peer.
+        domain: The domain for this peer.
+        lladdr: IPv6 lladdr of the WireGuard peer
+        wg_interface: Name of the WireGuard interface this peer will use
+        remove: If this is to be removed or not.
+        vx_interface: Name of the VXLAN interface we set a route for the lladdr to
+    """
 
     def __init__(self, public_key: str, latest_handshake : int = None,
                  is_installed : bool = False):
@@ -55,15 +67,20 @@ class WireGuardPeer:
 
     @property
     def lladdr(self) -> str:
-        m = hashlib.md5()
+        """Compute the X for an (IPv6) Link-Local address.
 
-        m.update(self.public_key.encode("ascii"))
-        hashed_key = m.hexdigest()
+        Returns:
+            IPv6 Link-Local address of the WireGuard peer.
+        """
+        pub_key_hash = hashlib.md5()
+        pub_key_hash.update(self.public_key.encode("ascii"))
+        hashed_key = pub_key_hash.hexdigest()
         hash_as_list = wrap(hashed_key, 2)
-        temp_mac = ":".join(["02"] + hash_as_list[:5])
+        current_mac_addr = ":".join(["02"] + hash_as_list[:5])
 
-        lladdr = re.sub(r"/\d+$", "/128", mac2eui64(mac=temp_mac, prefix="fe80::/10"))
-        return lladdr
+        return re.sub(
+            r"/\d+$", "/128", mac2eui64(mac=current_mac_addr, prefix="fe80::/10")
+        )
 
     @property
     def is_established(self) -> bool:
@@ -76,12 +93,6 @@ class WireGuardPeer:
     """WireGuardPeer describes complete configuration for a specific WireGuard client
 
     Attributes:
-        public_key: WireGuard Public key
-        domain: Domain Name of the WireGuard peer
-        lladdr: IPv6 lladdr of the WireGuard peer
-        wg_interface: Name of the WireGuard interface this peer will use
-        vx_interface: Name of the VXLAN interface we set a route for the lladdr to
-        remove: Are we removing this peer or not?
     """
 
 class ConfigManager:
@@ -97,7 +108,7 @@ class ConfigManager:
         return peer
 
     def pull_from_wireguard(self):
-        with WireGuard() as wg:
+        with pyroute2.WireGuard() as wg:
             infos = wg.info(self.wg_interface)
             for info in infos:
                 clients = info.WGDEVICE_A_PEERS.value
@@ -126,7 +137,7 @@ class ConfigManager:
                 if not peer.needs_config: continue
                 new_state = peer.is_established
 
-            with IPRoute() as ip:
+            with pyroute2.IPRoute() as ip:
                 ip.fdb(
                     "append" if new_state else "del",
                     ifindex=ip.link_lookup(ifname=self.vx_interface)[0],
@@ -135,7 +146,7 @@ class ConfigManager:
                     dst=re.sub(r"/\d+$", "", peer.lladdr),
                 )
 
-            with IPRoute() as ip:
+            with pyroute2.IPRoute() as ip:
                 ip.route(
                     "add" if new_state else "del",
                     dst=peer.lladdr,
@@ -177,7 +188,7 @@ def ensure_rt_proto_definition():
 
 
 def initial_cleanup():
-    with IPRoute() as ip:
+    with pyroute2.IPRoute() as ip:
         res = ip.flush_routes(proto=RT_PROTO_ID)
 
         if len(res) > 0:
