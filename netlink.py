@@ -52,11 +52,13 @@ class WireGuardPeer:
 
     Attributes:
         public_key: The public key to use for this peer.
-        domain: The domain for this peer.
+        latest_handshake: datetime of when the last handshake succeeded
+        is_installed: Whether there is a route and fdb entry installed
+
+    Properties:
         lladdr: IPv6 lladdr of the WireGuard peer
-        wg_interface: Name of the WireGuard interface this peer will use
-        remove: If this is to be removed or not.
-        vx_interface: Name of the VXLAN interface we set a route for the lladdr to
+        is_established: Whether the last handshake is not TIMEOUT ago
+        needs_config: Whether is_installed and is_established differ
     """
 
     def __init__(self, public_key: str, latest_handshake : int = None,
@@ -90,12 +92,14 @@ class WireGuardPeer:
     def needs_config(self) -> bool:
         return self.is_established != self.is_installed
 
-    """WireGuardPeer describes complete configuration for a specific WireGuard client
-
-    Attributes:
-    """
 
 class ConfigManager:
+    """
+
+    Attributes:
+        wg_interface: Name of the WireGuard interface this peer will use
+        vx_interface: Name of the VXLAN interface we set a route for the lladdr to
+    """
 
     def __init__(self, wg_interface : str, vx_interface : str):
         self.all_peers = []
