@@ -1,0 +1,48 @@
+# http://www.graphviz.org/content/cluster
+
+digraph G {
+  graph [fontname = "Handlee"];
+  node [fontname = "Handlee"];
+  edge [fontname = "Handlee"];
+
+  bgcolor=transparent;
+
+  subgraph git_repo {
+    style=filled;
+    color=lightgrey;
+    style="dotted"
+    node [style=filled,color="#d8b365"];
+    git_repo [label="*git repo*"];
+    fontsize = 20;
+  }
+
+  subgraph wireguard {
+    node [style=filled,color="#f5f5f5"];
+    style="dotted"
+    wireguard [label="WireGuard\n(pyroute2)"];
+    fontsize = 20;
+    color=blue
+  }
+
+  subgraph wireguard_vxlan_glue {
+    node [style=filled,color="#5ab4ac"];
+    style="dotted"
+    color=blue;
+    label = "*wireguard_vxlan_glue*";
+    fontsize = 20;
+    color=blue
+    wireguard -> wireguard_vxlan_glue -> netlink -> vxlan [style=invis];
+    wireguard_vxlan_glue [label="*wireguard_vxlan_glue*"];
+    netlink [label="netlink\n(pyroute2)"];
+    vxlan [label="vxlan FDB\n(pyroute2)"];
+  }
+  client -> git_repo [label="keys@hannover.freifunk.net"];
+  wireguard -> wireguard_vxlan_glue[label="Read\nPeers"];
+  git_repo -> wireguard [label="Reload\nConfiguration"];
+  wireguard_vxlan_glue -> netlink [label="Route\nInjection"];
+  wireguard_vxlan_glue -> vxlan [label="VxLAN FDB\nEntry"];
+
+  client [shape=Mdiamond];
+  {rank=same git_repo wireguard}
+  {rank=same netlink vxlan}
+}

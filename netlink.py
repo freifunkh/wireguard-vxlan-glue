@@ -1,17 +1,19 @@
+"""Functions related to netlink manipulation for Wireguard, IPRoute and FDB on Linux."""
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
 from json import loads as json_loads
 from textwrap import wrap
 from typing import Dict, List
 from datetime import datetime, timedelta
 import signal
 
-from pyroute2 import WireGuard, IPRoute
 import argparse
 import signal
 import os
+import pyroute2
 import time
 
 import ipaddress
@@ -19,33 +21,57 @@ import re
 
 RT_PROTO_ID = 129
 RT_PROTO = "wg-vxlan-glue"
+TIMEOUT = timedelta(minutes=3)
 
 
-def mac2eui64(mac, prefix=None):
+def mac2eui64(mac: str, prefix=None) -> str:
+    """Converts a MAC address to an EUI64 identifier.
+
+    If prefix is supplied, further convert the EUI64 address to an IPv6 address.
+    eg:
+        c4:91:0c:b2:c5:a0 -> c691:0cff:feb2:c5a0
+        c4:91:0c:b2:c5:a0, FE80::/10 -> fe80::c691:cff:feb2:c5a0/10
+
+    Arguments:
+        mac: The mac address to convert.
+        prefix: Prefix to use to create IPv6 address.
+
+    Raises:
+        ValueError: If mac or prefix is not correct format.
+
+    Returns:
+        An EUI64 address, or IPv6 Prefix.
     """
-    Convert a MAC address to a EUI64 identifier
-    or, with prefix provided, a full IPv6 address
-    """
+    if mac.count(":") != 5:
+        raise ValueError(
+            f"{mac} does not appear to be a correctly formatted mac address"
+        )
     # http://tools.ietf.org/html/rfc4291#section-2.5.1
     eui64 = re.sub(r"[.:-]", "", mac).lower()
     eui64 = eui64[0:6] + "fffe" + eui64[6:]
     eui64 = hex(int(eui64[0:2], 16) | 2)[2:].zfill(2) + eui64[2:]
 
-    if prefix is None:
+    if not prefix:
         return ":".join(re.findall(r".{4}", eui64))
     else:
-        try:
-            net = ipaddress.ip_network(prefix, strict=False)
-            euil = int("0x{}".format(eui64), 16)
-            return "{}/{}".format(net[euil], net.prefixlen)
-        except Exception:  # pylint: disable=broad-except
-            return
+        net = ipaddress.ip_network(prefix, strict=False)
+        euil = int(f"0x{eui64:16}", 16)
+        return f"{net[euil]}/{net.prefixlen}"
 
-#from wgkex.common.utils import mac2eui64
-
-TIMEOUT = timedelta(minutes=3)
 
 class WireGuardPeer:
+    """A Class representing a WireGuard peer.
+
+    Attributes:
+        public_key: The public key to use for this peer.
+        latest_handshake: datetime of when the last handshake succeeded
+        is_installed: Whether there is a route and fdb entry installed
+
+    Properties:
+        lladdr: IPv6 lladdr of the WireGuard peer
+        is_established: Whether the last handshake is not TIMEOUT ago
+        needs_config: Whether is_installed and is_established differ
+    """
 
     def __init__(self, public_key: str, latest_handshake : int = None,
                  is_installed : bool = False):
@@ -55,15 +81,20 @@ class WireGuardPeer:
 
     @property
     def lladdr(self) -> str:
-        m = hashlib.md5()
+        """Compute the X for an (IPv6) Link-Local address.
 
-        m.update(self.public_key.encode("ascii"))
-        hashed_key = m.hexdigest()
+        Returns:
+            IPv6 Link-Local address of the WireGuard peer.
+        """
+        pub_key_hash = hashlib.md5()
+        pub_key_hash.update(self.public_key.encode("ascii"))
+        hashed_key = pub_key_hash.hexdigest()
         hash_as_list = wrap(hashed_key, 2)
-        temp_mac = ":".join(["02"] + hash_as_list[:5])
+        current_mac_addr = ":".join(["02"] + hash_as_list[:5])
 
-        lladdr = re.sub(r"/\d+$", "/128", mac2eui64(mac=temp_mac, prefix="fe80::/10"))
-        return lladdr
+        return re.sub(
+            r"/\d+$", "/128", mac2eui64(mac=current_mac_addr, prefix="fe80::/10")
+        )
 
     @property
     def is_established(self) -> bool:
@@ -73,18 +104,14 @@ class WireGuardPeer:
     def needs_config(self) -> bool:
         return self.is_established != self.is_installed
 
-    """WireGuardPeer describes complete configuration for a specific WireGuard client
-
-    Attributes:
-        public_key: WireGuard Public key
-        domain: Domain Name of the WireGuard peer
-        lladdr: IPv6 lladdr of the WireGuard peer
-        wg_interface: Name of the WireGuard interface this peer will use
-        vx_interface: Name of the VXLAN interface we set a route for the lladdr to
-        remove: Are we removing this peer or not?
-    """
 
 class ConfigManager:
+    """
+
+    Attributes:
+        wg_interface: Name of the WireGuard interface this peer will use
+        vx_interface: Name of the VXLAN interface we set a route for the lladdr to
+    """
 
     def __init__(self, wg_interface : str, vx_interface : str):
         self.all_peers = []
@@ -97,7 +124,7 @@ class ConfigManager:
         return peer
 
     def pull_from_wireguard(self):
-        with WireGuard() as wg:
+        with pyroute2.WireGuard() as wg:
             infos = wg.info(self.wg_interface)
             for info in infos:
                 clients = info.WGDEVICE_A_PEERS.value
@@ -126,7 +153,7 @@ class ConfigManager:
                 if not peer.needs_config: continue
                 new_state = peer.is_established
 
-            with IPRoute() as ip:
+            with pyroute2.IPRoute() as ip:
                 ip.fdb(
                     "append" if new_state else "del",
                     ifindex=ip.link_lookup(ifname=self.vx_interface)[0],
@@ -135,7 +162,7 @@ class ConfigManager:
                     dst=re.sub(r"/\d+$", "", peer.lladdr),
                 )
 
-            with IPRoute() as ip:
+            with pyroute2.IPRoute() as ip:
                 ip.route(
                     "add" if new_state else "del",
                     dst=peer.lladdr,
@@ -177,7 +204,7 @@ def ensure_rt_proto_definition():
 
 
 def initial_cleanup():
-    with IPRoute() as ip:
+    with pyroute2.IPRoute() as ip:
         res = ip.flush_routes(proto=RT_PROTO_ID)
 
         if len(res) > 0:
