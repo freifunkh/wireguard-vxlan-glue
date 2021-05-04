@@ -15,23 +15,30 @@ from pyroute2 import WireGuard
 from pyroute2 import IPRoute
 import netlink
 
-_WG_CLIENT_ADD = netlink.WireGuardClient(
-    public_key="public_key", domain="add", remove=False
+_WG_CLIENT_ADD = netlink.WireGuardPeer(
+    public_key="public_key", latest_handshake=datetime.now(), is_installed=False
 )
-_WG_CLIENT_DEL = netlink.WireGuardClient(
-    public_key="public_key", domain="del", remove=True
+_WG_CLIENT_DEL = netlink.WireGuardPeer(
+    public_key="public_key",
+    latest_handshake=(datetime.now() - (netlink.TIMEOUT+timedelta(seconds=1))), is_installed=True
 )
 
 _WG_PEER_STALE = mock.Mock()
 _WG_PEER_STALE.WGPEER_A_PUBLIC_KEY = {"value": b"WGPEER_A_PUBLIC_KEY_STALE"}
 _WG_PEER_STALE.WGPEER_A_LAST_HANDSHAKE_TIME = {
-    "tv_sec": int((datetime.now() - timedelta(hours=5)).timestamp())
+    "tv_sec": int((datetime.now() - (netlink.TIMEOUT+timedelta(seconds=1))).timestamp())
 }
 
 _WG_PEER = mock.Mock()
 _WG_PEER.WGPEER_A_PUBLIC_KEY = {"value": b"WGPEER_A_PUBLIC_KEY"}
 _WG_PEER.WGPEER_A_LAST_HANDSHAKE_TIME = {
     "tv_sec": int((datetime.now() - timedelta(seconds=3)).timestamp())
+}
+
+_WG_PEER_NO_HANDSHAKE = mock.Mock()
+_WG_PEER_NO_HANDSHAKE.WGPEER_A_PUBLIC_KEY = {"value": b"WGPEER_A_PUBLIC_KEY_MISSING_HANDSHAKE"}
+_WG_PEER_NO_HANDSHAKE.WGPEER_A_LAST_HANDSHAKE_TIME = {
+    "something": "unrelated"
 }
 
 
@@ -45,135 +52,119 @@ def _get_wg_mock(peer):
     return wg_info_mock
 
 
-class NetlinkTest(unittest.TestCase):
+class ConfigManagerTest(unittest.TestCase):
     def setUp(self) -> None:
         iproute_instance = IPRoute()
         self.route_info_mock = iproute_instance.__enter__.return_value
+        self.cm = netlink.ConfigManager("some_wg_interface", "some_vx_interface")
         # self.addCleanup(mock.patch.stopall)
 
-    def test_find_stale_wireguard_clients_success_with_non_stale_peer(self):
-        """Tests find_stale_wireguard_clients no operation on non-stale peers."""
+    def test_pull_from_wireguard_success_with_non_stale_peer(self):
+        """Tests pull_from_wireguard add non-stale peers to all_peers."""
         wg_info_mock = _get_wg_mock(_WG_PEER)
-        self.assertListEqual([], netlink.find_stale_wireguard_clients("some_interface"))
+        self.cm.pull_from_wireguard()
+        self.assertListEqual([p.public_key for p in self.cm.all_peers], ["WGPEER_A_PUBLIC_KEY"])
 
-    def test_find_stale_wireguard_clients_success_stale_peer(self):
-        """Tests find_stale_wireguard_clients removal of stale peer"""
+    def test_pull_from_wireguard_success_with_stale_peer(self):
+        """Tests pull_from_wireguard even add stale peers to all_peers."""
         wg_info_mock = _get_wg_mock(_WG_PEER_STALE)
-        self.assertListEqual(
-            ["WGPEER_A_PUBLIC_KEY_STALE"],
-            netlink.find_stale_wireguard_clients("some_interface"),
-        )
+        self.cm.pull_from_wireguard()
+        self.assertListEqual([p.public_key for p in self.cm.all_peers], ["WGPEER_A_PUBLIC_KEY_STALE"])
 
-    def test_route_handler_add_success(self):
-        """Test route_handler for normal add operation."""
-        self.route_info_mock.route.return_value = {"key": "value"}
-        self.assertDictEqual({"key": "value"}, netlink.route_handler(_WG_CLIENT_ADD))
-        self.route_info_mock.route.assert_called_with(
-            "add", dst="fe80::282:6eff:fe9d:ecd3/128", oif=mock.ANY
-        )
+    def test_pull_from_wireguard_success_with_missing_handshake_peer(self):
+        """Tests pull_from_wireguard no operation on handshake-less peers."""
+        wg_info_mock = _get_wg_mock(_WG_PEER_NO_HANDSHAKE)
+        self.cm.pull_from_wireguard()
+        self.assertListEqual(self.cm.all_peers, [])
 
-    def test_route_handler_remove_success(self):
-        """Test route_handler for normal del operation."""
-        self.route_info_mock.route.return_value = {"key": "value"}
-        self.assertDictEqual({"key": "value"}, netlink.route_handler(_WG_CLIENT_DEL))
-        self.route_info_mock.route.assert_called_with(
-            "del", dst="fe80::282:6eff:fe9d:ecd3/128", oif=mock.ANY
-        )
-
-    def test_update_wireguard_peer_success(self):
-        """Test update_wireguard_peer for normal operation."""
+    def test_pull_from_wireguard_success_idempotency(self):
+        """Tests pull_from_wireguard no change, unless input changes."""
         wg_info_mock = _get_wg_mock(_WG_PEER)
-        self.assertDictEqual(
-            {"WireGuard": "set"}, netlink.update_wireguard_peer(_WG_CLIENT_ADD)
-        )
-        wg_info_mock.set.assert_called_with(
-            "wg-add",
-            peer={
-                "public_key": "public_key",
-                "persistent_keepalive": 15,
-                "allowed_ips": ["fe80::282:6eff:fe9d:ecd3/128"],
-                "remove": False,
-            },
-        )
+        self.cm.pull_from_wireguard()
+        self.assertListEqual([p.public_key for p in self.cm.all_peers], ["WGPEER_A_PUBLIC_KEY"])
+        self.cm.pull_from_wireguard()
+        self.assertListEqual([p.public_key for p in self.cm.all_peers], ["WGPEER_A_PUBLIC_KEY"])
 
-    def test_bridge_fdb_handler_append_success(self):
-        """Test bridge_fdb_handler for normal append operation."""
+    def test_find_by_public_key_success(self):
+        """Tests find_by_public_key, returns the correct peer."""
+        reference_peer = netlink.WireGuardPeer("WGPEER_A_PUBLIC_KEY")
+        self.cm.all_peers.append(reference_peer)
+
+        self.assertListEqual(self.cm.find_by_public_key("WGPEER_A_PUBLIC_KEY"), [reference_peer])
+
+    def test_find_by_public_key_fail(self):
+        """Tests find_by_public_key, returns empty list if no matching peer found."""
+        cm = netlink.ConfigManager("some_wg_interface", "some_vx_interface")
+        reference_peer = netlink.WireGuardPeer("WGPEER_A_PUBLIC_KEY")
+        cm.all_peers.append(reference_peer)
+
+        self.assertListEqual(cm.find_by_public_key("WGPEER_AN_UNKNOWN_PUBLIC_KEY"), [])
+
+    def test_find_by_public_key_duplicete(self):
+        """Tests find_by_public_key, raises AssertionError if searched pubkey is not unique."""
+        cm = netlink.ConfigManager("some_wg_interface", "some_vx_interface")
+        reference_peer = netlink.WireGuardPeer("WGPEER_A_PUBLIC_KEY")
+        cm.all_peers.append(reference_peer)
+        cm.all_peers.append(reference_peer)
+
+        with self.assertRaises(AssertionError):
+            cm.find_by_public_key("WGPEER_A_PUBLIC_KEY")
+
+    def test_push_vxlan_configs_add(self):
+        """Test push_vxlan_configs for normal add operation."""
         self.route_info_mock.fdb.return_value = {"key": "value"}
-        self.assertEqual({"key": "value"}, netlink.bridge_fdb_handler(_WG_CLIENT_ADD))
+        self.route_info_mock.route.return_value = {"key": "value"}
+        cm = netlink.ConfigManager("some_wg_interface", "some_vx_interface")
+        cm.all_peers.append(_WG_CLIENT_ADD)
+
+        self.assertIsNone(cm.push_vxlan_configs())
+
+        self.route_info_mock.route.assert_called_with(
+            "add", dst="fe80::2e4:afff:fee2:6b5b/128", oif=mock.ANY, proto=netlink.RT_PROTO_ID
+        )
         self.route_info_mock.fdb.assert_called_with(
             "append",
             ifindex=mock.ANY,
             lladdr="00:00:00:00:00:00",
-            dst="fe80::282:6eff:fe9d:ecd3",
+            dst="fe80::2e4:afff:fee2:6b5b",
         )
 
-    def test_bridge_fdb_handler_del_success(self):
-        """Test bridge_fdb_handler for normal del operation."""
+    def test_push_vxlan_configs_force_remove(self):
+        """Test push_vxlan_configs for forced removal of peers."""
         self.route_info_mock.fdb.return_value = {"key": "value"}
-        self.assertEqual({"key": "value"}, netlink.bridge_fdb_handler(_WG_CLIENT_DEL))
+        self.route_info_mock.route.return_value = {"key": "value"}
+        cm = netlink.ConfigManager("some_wg_interface", "some_vx_interface")
+        cm.all_peers.append(_WG_CLIENT_ADD)
+
+        self.assertIsNone(cm.push_vxlan_configs(force_remove=True))
+
+        self.route_info_mock.route.assert_called_with(
+            "del", dst="fe80::2e4:afff:fee2:6b5b/128", oif=mock.ANY, proto=netlink.RT_PROTO_ID
+        )
         self.route_info_mock.fdb.assert_called_with(
             "del",
             ifindex=mock.ANY,
             lladdr="00:00:00:00:00:00",
-            dst="fe80::282:6eff:fe9d:ecd3",
+            dst="fe80::2e4:afff:fee2:6b5b",
         )
 
-    def test_link_handler_addition_success(self):
-        """Test link_handler for normal operation."""
-        expected = {
-            "Wireguard": {"WireGuard": "set"},
-            "Route": {"IPRoute": "route"},
-            "Bridge FDB": {"IPRoute": "fdb"},
-        }
-        wg_info_mock = _get_wg_mock(_WG_PEER)
-        wg_info_mock.set.return_value = {"WireGuard": "set"}
-        self.route_info_mock.fdb.return_value = {"IPRoute": "fdb"}
-        self.route_info_mock.route.return_value = {"IPRoute": "route"}
-        self.assertEqual(expected, netlink.link_handler(_WG_CLIENT_ADD))
+    def test_push_vxlan_configs_del(self):
+        """Test push_vxlan_configs for normal remove operation."""
+        self.route_info_mock.fdb.return_value = {"key": "value"}
+        self.route_info_mock.route.return_value = {"key": "value"}
+        cm = netlink.ConfigManager("some_wg_interface", "some_vx_interface")
+        cm.all_peers.append(_WG_CLIENT_DEL)
+
+        self.assertIsNone(cm.push_vxlan_configs())
+
+        self.route_info_mock.route.assert_called_with(
+            "del", dst="fe80::2e4:afff:fee2:6b5b/128", oif=mock.ANY, proto=netlink.RT_PROTO_ID
+        )
         self.route_info_mock.fdb.assert_called_with(
-            "append",
+            "del",
             ifindex=mock.ANY,
             lladdr="00:00:00:00:00:00",
-            dst="fe80::282:6eff:fe9d:ecd3",
-        )
-        self.route_info_mock.route.assert_called_with(
-            "add", dst="fe80::282:6eff:fe9d:ecd3/128", oif=mock.ANY
-        )
-        wg_info_mock.set.assert_called_with(
-            "wg-add",
-            peer={
-                "public_key": "public_key",
-                "persistent_keepalive": 15,
-                "allowed_ips": ["fe80::282:6eff:fe9d:ecd3/128"],
-                "remove": False,
-            },
-        )
-
-    def test_wg_flush_stale_peers_not_stale_success(self):
-        """Tests processing of non-stale WireGuard Peer."""
-        wg_info_mock = _get_wg_mock(_WG_PEER)
-        self.route_info_mock.fdb.return_value = {"IPRoute": "fdb"}
-        self.route_info_mock.route.return_value = {"IPRoute": "route"}
-        self.assertListEqual([], netlink.wg_flush_stale_peers("domain"))
-        # TODO(ruairi): Understand why pyroute.WireGuard.set
-        # wg_info_mock.set.assert_not_called()
-
-    def test_wg_flush_stale_peers_stale_success(self):
-        """Tests processing of stale WireGuard Peer."""
-        expected = [
-            {
-                "Wireguard": {"WireGuard": "set"},
-                "Route": {"IPRoute": "route"},
-                "Bridge FDB": {"IPRoute": "fdb"},
-            }
-        ]
-        self.route_info_mock.fdb.return_value = {"IPRoute": "fdb"}
-        self.route_info_mock.route.return_value = {"IPRoute": "route"}
-        wg_info_mock = _get_wg_mock(_WG_PEER_STALE)
-        wg_info_mock.set.return_value = {"WireGuard": "set"}
-        self.assertListEqual(expected, netlink.wg_flush_stale_peers("domain"))
-        self.route_info_mock.route.assert_called_with(
-            "del", dst="fe80::281:16ff:fe49:395e/128", oif=mock.ANY
+            dst="fe80::2e4:afff:fee2:6b5b",
         )
 
 
