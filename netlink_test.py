@@ -168,5 +168,49 @@ class ConfigManagerTest(unittest.TestCase):
         )
 
 
+class WireGuardPeerTestCase(unittest.TestCase):
+    def test_lladdr(self):
+        dummy = netlink.WireGuardPeer("E2GuBSnyrKKG2mPIFc8tkEymTOTJcNH1WvF6N9KoWgs=")
+        self.assertEqual("fe80::213:18ff:fe6e:f314/128", dummy.lladdr, "Calculated lladdr is wrong.")
+
+    def test_is_established_recent(self):
+        recent = netlink.WireGuardPeer("doesnotmatter", latest_handshake=datetime.now())
+        self.assertTrue(recent.is_established, "Wrongly marked a recent peer as not established.")
+
+    def test_is_established_stalled(self):
+        stalled = netlink.WireGuardPeer("doesnotmatter",
+                                        latest_handshake=datetime.now()-(timedelta(seconds=1)+netlink.TIMEOUT))
+        assert False is stalled.is_established
+        self.assertFalse(stalled.is_established, "Wrongly marked a stalled peer as established.")
+
+    @mock.patch.object(netlink.WireGuardPeer, 'is_established')
+    def test_needs_config_installed_pos(self, mock_wgp):
+        mock_wgp.__get__ = mock.PropertyMock(return_value=False)
+        established = netlink.WireGuardPeer("doesnotmatter", is_installed=True)
+
+        self.assertTrue(established.needs_config, "Installed but not established peer does need configuration")
+
+    @mock.patch.object(netlink.WireGuardPeer, 'is_established')
+    def test_needs_config_installed_neg(self, mock_wgp):
+        mock_wgp.__get__ = mock.PropertyMock(return_value=True)
+        established = netlink.WireGuardPeer("doesnotmatter", is_installed=True)
+
+        self.assertFalse(established.needs_config, "Installed and established peer does not need configuration.")
+
+    @mock.patch.object(netlink.WireGuardPeer, 'is_established')
+    def test_needs_config_to_install_pos(self, mock_wgp):
+        mock_wgp.__get__ = mock.PropertyMock(return_value=False)
+        established = netlink.WireGuardPeer("doesnotmatter", is_installed=False)
+
+        self.assertFalse(established.needs_config, "Not installed, not established peer does not need configuration.")
+
+    @mock.patch.object(netlink.WireGuardPeer, 'is_established')
+    def test_needs_config_to_install_neg(self, mock_wgp):
+        mock_wgp.__get__ = mock.PropertyMock(return_value=True)
+        established = netlink.WireGuardPeer("doesnotmatter", is_installed=False)
+
+        self.assertTrue(established.needs_config, "Not installed yet established peer does need configuration.")
+
+
 if __name__ == "__main__":
     unittest.main()
