@@ -37,8 +37,8 @@ digraph G {
     vxlan [label="vxlan FDB\n(pyroute2)"];
   }
   client -> git_repo [label="keys@hannover.freifunk.net"];
-  wireguard -> wireguard_vxlan_glue[label="Read\ncurrent\npeers"];
-  git_repo -> wireguard [label="Reload\nthe configuration"];
+  wireguard -> wireguard_vxlan_glue[label="Read\nPeers"];
+  git_repo -> wireguard [label="Reload\nConfiguration"];
   wireguard_vxlan_glue -> netlink [label="Route\nInjection"];
   wireguard_vxlan_glue -> vxlan [label="VxLAN FDB\nEntry"];
 
