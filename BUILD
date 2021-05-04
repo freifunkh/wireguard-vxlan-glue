@@ -7,6 +7,7 @@ py_library(
     srcs = ["netlink.py"],
     visibility = ["//visibility:public"],
     deps = [
+       requirement("ipaddress"),
        requirement("NetLink"),
        requirement("pyroute2")
     ],
