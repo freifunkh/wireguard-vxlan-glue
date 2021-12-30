@@ -100,13 +100,14 @@ class ConfigManager:
         with WireGuard() as wg:
             infos = wg.info(self.wg_interface)
             for info in infos:
-                clients = info.WGDEVICE_A_PEERS.value
+                clients = info.get_attr('WGDEVICE_A_PEERS')
 
                 for client in clients:
-                    if "tv_sec" not in client.WGPEER_A_LAST_HANDSHAKE_TIME:
+                    try:
+                        latest_handshake = client.get_attr('WGPEER_A_LAST_HANDSHAKE_TIME').get("tv_sec", int())
+                    except KeyError:
                         continue
-                    latest_handshake = client.WGPEER_A_LAST_HANDSHAKE_TIME["tv_sec"]
-                    public_key = client.WGPEER_A_PUBLIC_KEY["value"].decode("utf-8")
+                    public_key = client.get_attr('WGPEER_A_PUBLIC_KEY').decode("utf-8")
 
                     peer = self.find_by_public_key(public_key)
                     if len(peer) < 1:
