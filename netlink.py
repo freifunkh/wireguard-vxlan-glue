@@ -103,8 +103,12 @@ class ConfigManager:
                 clients = info.get_attr('WGDEVICE_A_PEERS')
 
                 for client in clients:
-                    try:
-                        latest_handshake = client.get_attr('WGPEER_A_LAST_HANDSHAKE_TIME').get("tv_sec", int())
+                    try:                        
+                        foo = client.get_attr('WGPEER_A_LAST_HANDSHAKE_TIME')
+                        if foo is None:
+                            latest_handshake = 999999
+                        else:
+                            latest_handshake = foo.get("tv_sec", int())                        
                     except KeyError:
                         continue
                     public_key = client.get_attr('WGPEER_A_PUBLIC_KEY').decode("utf-8")
