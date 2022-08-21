@@ -89,14 +89,15 @@ class WireGuardPeer:
 class ConfigManager:
 
     def __init__(self, wg_interface : str, vx_interface : str):
-        self.all_peers = []
+        self.all_peers = {}
         self.wg_interface = wg_interface
         self.vx_interface = vx_interface
 
     def find_by_public_key(self, public_key : str) -> [WireGuardPeer]:
-        peer = list(filter(lambda p: p.public_key == public_key, self.all_peers))
-        assert(len(peer) <= 1)
-        return peer
+        try:
+            return [self.all_peers[public_key]]
+        except KeyError:
+            return []
 
     def pull_from_wireguard(self):
         with WireGuard() as wg:
@@ -118,14 +119,14 @@ class ConfigManager:
                     peer = self.find_by_public_key(public_key)
                     if len(peer) < 1:
                         peer = WireGuardPeer(public_key)
-                        self.all_peers.append(peer)
+                        self.all_peers[public_key] = peer
                     else:
                         peer = peer[0]
 
                     peer.latest_handshake = datetime.fromtimestamp(latest_handshake)
 
     def push_vxlan_configs(self, force_remove = False):
-        for peer in self.all_peers:
+        for peer in self.all_peers.values():
             if force_remove:
                 if not peer.is_installed: continue
                 new_state = False
