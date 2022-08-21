@@ -6,6 +6,7 @@ from json import loads as json_loads
 from textwrap import wrap
 from typing import Dict, List
 from datetime import datetime, timedelta
+from threading import Event
 import signal
 
 from pyroute2 import WireGuard, IPRoute
@@ -20,6 +21,7 @@ import re
 RT_PROTO_ID = 129
 RT_PROTO = "wg-vxlan-glue"
 
+exit = Event()
 
 def mac2eui64(mac, prefix=None):
     """
@@ -87,14 +89,15 @@ class WireGuardPeer:
 class ConfigManager:
 
     def __init__(self, wg_interface : str, vx_interface : str):
-        self.all_peers = []
+        self.all_peers = {}
         self.wg_interface = wg_interface
         self.vx_interface = vx_interface
 
     def find_by_public_key(self, public_key : str) -> [WireGuardPeer]:
-        peer = list(filter(lambda p: p.public_key == public_key, self.all_peers))
-        assert(len(peer) <= 1)
-        return peer
+        try:
+            return [self.all_peers[public_key]]
+        except KeyError:
+            return []
 
     def pull_from_wireguard(self):
         with WireGuard() as wg:
@@ -111,19 +114,19 @@ class ConfigManager:
                             latest_handshake = foo.get("tv_sec", int())                        
                     except KeyError:
                         continue
-                    public_key = client.get_attr('WGPEER_A_PUBLIC_KEY').decode("utf-8")
+                    public_key = client.get_attr('WGPEER_A_PUBLIC_KEY').decode("ascii")
 
                     peer = self.find_by_public_key(public_key)
                     if len(peer) < 1:
                         peer = WireGuardPeer(public_key)
-                        self.all_peers.append(peer)
+                        self.all_peers[public_key] = peer
                     else:
                         peer = peer[0]
 
                     peer.latest_handshake = datetime.fromtimestamp(latest_handshake)
 
     def push_vxlan_configs(self, force_remove = False):
-        for peer in self.all_peers:
+        for peer in self.all_peers.values():
             if force_remove:
                 if not peer.is_installed: continue
                 new_state = False
@@ -237,28 +240,24 @@ if __name__ == '__main__':
 
         managers.append(ConfigManager(args.wireguard[i], args.vxlan[i]))
 
-    should_stop = False
-
     def handler(signum, frame):
-        global should_stop
         if signum == signal.SIGTERM:
             print('Received SIGTERM. Exiting...')
         elif signum == signal.SIGINT:
             print('Received SIGINT. Exiting...')
-        should_stop = True
+        exit.set()
 
     signal.signal(signal.SIGTERM, handler)
     signal.signal(signal.SIGINT, handler)
 
-    while not should_stop:
+    while not exit.is_set():
         for manager in managers:
             manager.pull_from_wireguard()
             manager.push_vxlan_configs()
-
-        for i in range(100):
-            if should_stop:
+            if exit.is_set():
                 break
-            time.sleep(0.1)
+
+        exit.wait(10)
 
     for manager in managers:
         manager.cleanup()
