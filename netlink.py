@@ -133,7 +133,7 @@ class ConfigManager:
                     if "tv_sec" not in client.WGPEER_A_LAST_HANDSHAKE_TIME:
                         continue
                     latest_handshake = client.WGPEER_A_LAST_HANDSHAKE_TIME["tv_sec"]
-                    public_key = client.WGPEER_A_PUBLIC_KEY["value"].decode("utf-8")
+                    public_key = client.WGPEER_A_PUBLIC_KEY["value"].decode("ascii")
 
                     peer = self.find_by_public_key(public_key)
                     if len(peer) < 1:
