@@ -111,7 +111,7 @@ class ConfigManager:
                             latest_handshake = foo.get("tv_sec", int())                        
                     except KeyError:
                         continue
-                    public_key = client.get_attr('WGPEER_A_PUBLIC_KEY').decode("utf-8")
+                    public_key = client.get_attr('WGPEER_A_PUBLIC_KEY').decode("ascii")
 
                     peer = self.find_by_public_key(public_key)
                     if len(peer) < 1:
