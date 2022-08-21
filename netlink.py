@@ -6,6 +6,7 @@ from json import loads as json_loads
 from textwrap import wrap
 from typing import Dict, List
 from datetime import datetime, timedelta
+from threading import Event
 import signal
 
 from pyroute2 import WireGuard, IPRoute
@@ -20,6 +21,7 @@ import re
 RT_PROTO_ID = 129
 RT_PROTO = "wg-vxlan-glue"
 
+exit = Event()
 
 def mac2eui64(mac, prefix=None):
     """
@@ -237,28 +239,24 @@ if __name__ == '__main__':
 
         managers.append(ConfigManager(args.wireguard[i], args.vxlan[i]))
 
-    should_stop = False
-
     def handler(signum, frame):
-        global should_stop
         if signum == signal.SIGTERM:
             print('Received SIGTERM. Exiting...')
         elif signum == signal.SIGINT:
             print('Received SIGINT. Exiting...')
-        should_stop = True
+        exit.set()
 
     signal.signal(signal.SIGTERM, handler)
     signal.signal(signal.SIGINT, handler)
 
-    while not should_stop:
+    while not exit.is_set():
         for manager in managers:
             manager.pull_from_wireguard()
             manager.push_vxlan_configs()
-
-        for i in range(100):
-            if should_stop:
+            if exit.is_set():
                 break
-            time.sleep(0.1)
+
+        exit.wait(10)
 
     for manager in managers:
         manager.cleanup()
