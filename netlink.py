@@ -6,10 +6,11 @@ from json import loads as json_loads
 from textwrap import wrap
 from typing import Dict, List
 from datetime import datetime, timedelta
+from subprocess import PIPE, Popen
 from threading import Event
 import signal
 
-from pyroute2 import WireGuard, IPRoute
+from pyroute2 import IPRoute
 import argparse
 import signal
 import os
@@ -100,30 +101,21 @@ class ConfigManager:
             return []
 
     def pull_from_wireguard(self):
-        with WireGuard() as wg:
-            infos = wg.info(self.wg_interface)
-            for info in infos:
-                clients = info.get_attr('WGDEVICE_A_PEERS')
+        with Popen(["wg", "show", self.wg_interface, "latest-handshakes"], stdout=PIPE, text=True) as p:
+            for line in p.stdout:
+                (public_key, str_latest_handshake) = line.split()
+                if str_latest_handshake=="0":
+                    latest_handshake = 999999
+                else:
+                    latest_handshake = int(str_latest_handshake)
+                peer = self.find_by_public_key(public_key)
+                if len(peer) < 1:
+                    peer = WireGuardPeer(public_key)
+                    self.all_peers[public_key] = peer
+                else:
+                    peer = peer[0]
 
-                for client in clients:
-                    try:                        
-                        foo = client.get_attr('WGPEER_A_LAST_HANDSHAKE_TIME')
-                        if foo is None:
-                            latest_handshake = 999999
-                        else:
-                            latest_handshake = foo.get("tv_sec", int())                        
-                    except KeyError:
-                        continue
-                    public_key = client.get_attr('WGPEER_A_PUBLIC_KEY').decode("ascii")
-
-                    peer = self.find_by_public_key(public_key)
-                    if len(peer) < 1:
-                        peer = WireGuardPeer(public_key)
-                        self.all_peers[public_key] = peer
-                    else:
-                        peer = peer[0]
-
-                    peer.latest_handshake = datetime.fromtimestamp(latest_handshake)
+                peer.latest_handshake = datetime.fromtimestamp(latest_handshake)
 
     def push_vxlan_configs(self, force_remove = False):
         for peer in self.all_peers.values():
