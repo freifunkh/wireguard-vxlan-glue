@@ -22,7 +22,7 @@ import re
 RT_PROTO_ID = 129
 RT_PROTO = "wg-vxlan-glue"
 
-exit = Event()
+exit_event = Event()
 
 def mac2eui64(mac, prefix=None):
     """
@@ -237,19 +237,19 @@ if __name__ == '__main__':
             print('Received SIGTERM. Exiting...')
         elif signum == signal.SIGINT:
             print('Received SIGINT. Exiting...')
-        exit.set()
+        exit_event.set()
 
     signal.signal(signal.SIGTERM, handler)
     signal.signal(signal.SIGINT, handler)
 
-    while not exit.is_set():
+    while not exit_event.is_set():
         for manager in managers:
             manager.pull_from_wireguard()
             manager.push_vxlan_configs()
-            if exit.is_set():
+            if exit_event.is_set():
                 break
 
-        exit.wait(10)
+        exit_event.wait(10)
 
     for manager in managers:
         manager.cleanup()
