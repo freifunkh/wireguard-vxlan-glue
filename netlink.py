@@ -14,6 +14,7 @@ from pyroute2 import IPRoute
 import argparse
 import signal
 import os
+import sys
 import time
 
 import ipaddress
@@ -21,6 +22,13 @@ import re
 
 RT_PROTO_ID = 129
 RT_PROTO = "wg-vxlan-glue"
+
+def prefix_every_line(string, prefix):
+    return prefix + prefix.join(str(string).splitlines(True))
+
+def print_err(msg):
+    SYSTEMD_JOURNAL_VERBOSITY_ERR = "<3>"
+    print(prefix_every_line(msg, SYSTEMD_JOURNAL_VERBOSITY_ERR), file=sys.stderr)
 
 exit_event = Event()
 
@@ -127,21 +135,29 @@ class ConfigManager:
                 new_state = peer.is_established
 
             with IPRoute() as ip:
-                ip.fdb(
-                    "append" if new_state else "del",
-                    ifindex=ip.link_lookup(ifname=self.vx_interface)[0],
-                    # mac 00:00:00:00:00:00 means automatic learning
-                    lladdr="00:00:00:00:00:00",
-                    dst=re.sub(r"/\d+$", "", peer.lladdr),
-                )
+                try:
+                    ip.fdb(
+                        "append" if new_state else "del",
+                        ifindex=ip.link_lookup(ifname=self.vx_interface)[0],
+                        # mac 00:00:00:00:00:00 means automatic learning
+                        lladdr="00:00:00:00:00:00",
+                        dst=re.sub(r"/\d+$", "", peer.lladdr),
+                    )
+                except pyroute2.netlink.exceptions.NetlinkError as e:
+                    print_err("Inserting FDB entry failed for {peer.public_key} on {self.vx_interface}.")
+                    print_err(str(e))
 
             with IPRoute() as ip:
-                ip.route(
-                    "add" if new_state else "del",
-                    dst=peer.lladdr,
-                    oif=ip.link_lookup(ifname=self.wg_interface)[0],
-                    proto=RT_PROTO_ID,
-                )
+                try:
+                    ip.route(
+                        "add" if new_state else "del",
+                        dst=peer.lladdr,
+                        oif=ip.link_lookup(ifname=self.wg_interface)[0],
+                        proto=RT_PROTO_ID,
+                    )
+                except pyroute2.netlink.exceptions.NetlinkError as e:
+                    print_err("Inserting FDB entry failed for {peer.public_key} on {self.vx_interface}.")
+                    print_err(str(e))
 
             if new_state:
                 print(f'Installed route and fdb entry for {peer.public_key} ({self.wg_interface}, {self.vx_interface})')
