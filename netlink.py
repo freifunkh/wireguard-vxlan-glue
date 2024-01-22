@@ -11,6 +11,7 @@ from threading import Event
 import signal
 
 from pyroute2 import IPRoute
+from pyroute2.netlink.exceptions import NetlinkError
 import argparse
 import signal
 import os
@@ -143,7 +144,7 @@ class ConfigManager:
                         lladdr="00:00:00:00:00:00",
                         dst=re.sub(r"/\d+$", "", peer.lladdr),
                     )
-                except pyroute2.netlink.exceptions.NetlinkError as e:
+                except NetlinkError as e:
                     print_err("Inserting FDB entry failed for {peer.public_key} on {self.vx_interface}.")
                     print_err(str(e))
 
@@ -155,7 +156,7 @@ class ConfigManager:
                         oif=ip.link_lookup(ifname=self.wg_interface)[0],
                         proto=RT_PROTO_ID,
                     )
-                except pyroute2.netlink.exceptions.NetlinkError as e:
+                except NetlinkError as e:
                     print_err("Inserting FDB entry failed for {peer.public_key} on {self.vx_interface}.")
                     print_err(str(e))
 
