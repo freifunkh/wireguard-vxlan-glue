@@ -145,7 +145,7 @@ class ConfigManager:
                         dst=re.sub(r"/\d+$", "", peer.lladdr),
                     )
                 except NetlinkError as e:
-                    print_err("Inserting FDB entry failed for {peer.public_key} on {self.vx_interface}.")
+                    print_err(f"Inserting FDB entry failed for {peer.public_key} on {self.vx_interface}.")
                     print_err(str(e))
 
             with IPRoute() as ip:
@@ -157,7 +157,7 @@ class ConfigManager:
                         proto=RT_PROTO_ID,
                     )
                 except NetlinkError as e:
-                    print_err("Inserting FDB entry failed for {peer.public_key} on {self.vx_interface}.")
+                    print_err(f"Inserting FDB entry failed for {peer.public_key} on {self.vx_interface}.")
                     print_err(str(e))
 
             if new_state:
